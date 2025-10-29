@@ -8,7 +8,7 @@ __pycache__/
 env
 .venv
 docker-compose.yml-example
-
+.idea
 #migrations
 #apps/eotw_auth/migrations/
 #apps/dictionaries/migrations/
