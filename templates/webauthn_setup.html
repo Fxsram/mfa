@@ -10,15 +10,19 @@
 <script>
   document.getElementById("register-btn").addEventListener("click", async () => {
     const name = document.getElementById("cred-name").value || "Authenticator";
-    document.getElementById("status").textContent = "Starting registration...";
+    const statusEl = document.getElementById("status");
+    statusEl.textContent = "Starting registration...";
     try {
-      const res = await fetch("{% url 'accounts:webauthn_register_begin' %}");
+      const res = await fetch("{% url 'accounts:webauthn_register_begin' %}", {
+        credentials: "include"
+      });
       const options = await res.json();
 
-      options.publicKey.challenge = base64UrlToBuffer(options.publicKey.challenge);
-      options.publicKey.user.id = base64UrlToBuffer(options.publicKey.user.id);
+      // Convert fields on the options object itself
+      options.challenge = base64UrlToBuffer(options.challenge);
+      options.user.id = base64UrlToBuffer(options.user.id);
 
-      const cred = await navigator.credentials.create({ publicKey: options.publicKey });
+      const cred = await navigator.credentials.create({ publicKey: options });
 
       const attestation = {
         id: cred.id,
@@ -28,23 +32,29 @@
           clientDataJSON: bufferToBase64Url(cred.response.clientDataJSON),
           attestationObject: bufferToBase64Url(cred.response.attestationObject),
         },
-        name: name
+        name: name,
       };
 
       const complete = await fetch("{% url 'accounts:webauthn_register_complete' %}", {
         method: "POST",
-        headers: { "Content-Type": "application/json", "X-CSRFToken": getCookie("csrftoken") },
+        headers: {
+          "Content-Type": "application/json",
+          "X-CSRFToken": getCookie("csrftoken"),
+        },
+        credentials: "include",
         body: JSON.stringify(attestation),
       });
       const result = await complete.json();
+
       if (complete.ok && result.ok) {
-        document.getElementById("status").textContent = "Registration successful.";
+        statusEl.textContent = "Registration successful.";
         window.location = "{% url 'accounts:profile' %}";
       } else {
-        document.getElementById("status").textContent = "Registration failed: " + (result.error || complete.statusText);
+        statusEl.textContent =
+          "Registration failed: " + (result.error || complete.statusText);
       }
     } catch (err) {
-      document.getElementById("status").textContent = "Error: " + err;
+      statusEl.textContent = "Error: " + err;
     }
   });
 </script>

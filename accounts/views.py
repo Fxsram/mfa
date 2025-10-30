@@ -17,6 +17,8 @@ from django.contrib.auth import authenticate, login, logout
 from django.contrib.auth.decorators import login_required
 from django.contrib.auth.models import User
 from django.shortcuts import redirect, render, get_object_or_404
+from django.urls import reverse
+from django.utils.encoding import force_str
 from django.views.decorators.http import require_http_methods, require_GET, require_POST
 from django.views.decorators.csrf import csrf_exempt
 from django.http import JsonResponse, HttpResponseBadRequest
@@ -35,15 +37,19 @@ from webauthn import (
     verify_authentication_response,
 )
 from webauthn.helpers import bytes_to_base64url, base64url_to_bytes
+from webauthn.helpers.structs import AttestationConveyancePreference
+from webauthn.helpers.cose import COSEAlgorithmIdentifier
+from webauthn.helpers.structs import PublicKeyCredentialDescriptor, UserVerificationRequirement, \
+    AttestationConveyancePreference
 
 from .forms import RegisterForm, LoginForm, OTPSetupForm, OTPVerifyForm
 from .models import UserMFA, OTPType
 from .utils import qr_png_base64
 
 # WebAuthn config — set via environment variables in your deployment
-RP_ID = os.environ.get("WEBAUTHN_RP_ID", "example.com")       # e.g. "example.com"
+RP_ID = os.environ.get("WEBAUTHN_RP_ID", "192.168.10.3")       # e.g. "example.com"
 RP_NAME = os.environ.get("WEBAUTHN_RP_NAME", "MFA Demo")
-ORIGIN = os.environ.get("WEBAUTHN_ORIGIN", "https://example.com")  # e.g. "https://example.com"
+ORIGIN = os.environ.get("WEBAUTHN_ORIGIN", "http://192.168.10.3:8000")  # e.g. "https://example.com"
 
 # Helper conversions
 def b64(b: bytes) -> str:
@@ -181,6 +187,14 @@ def otp_setup_view(request):
     # For convenience, also show the current live code for TOTP users (useful for testing)
     live_totp = mfa.totp_obj().now() if mfa.otp_type == OTPType.TOTP else None
 
+    # NEW: WebAuthn QR to open the built-in setup page on another device
+    webauthn_qr_data_uri = ""
+    webauthn_setup_url = ""
+    if mfa.otp_type == OTPType.WEBAUTHN:
+        setup_path = reverse("accounts:webauthn_setup")  # uses your existing URL
+        webauthn_setup_url = f"{ORIGIN}{setup_path}"
+        webauthn_qr_data_uri = qr_png_base64(webauthn_setup_url)
+
     return render(
         request,
         "otp_setup.html",
@@ -190,6 +204,9 @@ def otp_setup_view(request):
             "provisioning_uri": provisioning_uri,
             "qr_data_uri": qr_data_uri,
             "live_totp": live_totp,
+            # NEW context for WebAuthn
+            "webauthn_qr_data_uri": webauthn_qr_data_uri,
+            "webauthn_setup_url": webauthn_setup_url,
         },
     )
 
@@ -208,27 +225,23 @@ def webauthn_setup_page(request):
     # Simple page to register an authenticator
     return render(request, "webauthn_setup.html", {})
 
+# webauthn_register_begin (replace your current body)
 @login_required
 @require_GET
 def webauthn_register_begin(request):
-    """
-    Generate PublicKeyCredentialCreationOptions for navigator.credentials.create()
-    Uses duo-labs/webauthn helper generate_registration_options and options_to_json.
-    Stores the raw challenge in session (base64url).
-    """
     user = request.user
-    # generate options
     options = generate_registration_options(
         rp_name=RP_NAME,
         rp_id=RP_ID,
-        user_id=str(user.id),
         user_name=user.username,
-        attestation="direct",
-        pub_key_cred_params=[{"type": "public-key", "alg": -7}, {"type": "public-key", "alg": -257}],
+        user_id=str(user.id).encode("utf-8"),
+        attestation=AttestationConveyancePreference.DIRECT,
+        supported_pub_key_algs=[
+            COSEAlgorithmIdentifier.ECDSA_SHA_256,          # -7
+            COSEAlgorithmIdentifier.RSASSA_PKCS1_v1_5_SHA_256,  # -257
+        ],
     )
-    # options.challenge is bytes; store base64url in session
     request.session["webauthn_reg_challenge"] = bytes_to_base64url(options.challenge)
-    # Return JSON-friendly options for the browser
     return JsonResponse(json.loads(options_to_json(options)))
 
 @csrf_exempt
@@ -296,6 +309,7 @@ def webauthn_auth_page(request):
     return render(request, "webauthn_auth.html", {})
 
 @require_GET
+@require_GET
 def webauthn_auth_begin(request):
     pending_uid = request.session.get("pending_uid")
     if not pending_uid:
@@ -304,61 +318,73 @@ def webauthn_auth_begin(request):
     user = get_object_or_404(User, id=pending_uid)
     mfa = _get_or_create_mfa(user)
 
-    # Build allowCredentials list: the library expects raw id bytes in the browser, we return base64url ids
+    # IDs must be raw bytes for the options object
     allow_credentials = []
     for c in (mfa.webauthn_credentials or []):
-        # credential id is stored base64url
-        allow_credentials.append({"type": "public-key", "id": c.get("id")})
+        cred_id_bytes = base64url_to_bytes(c.get("id"))
+        allow_credentials.append(
+            PublicKeyCredentialDescriptor(id=cred_id_bytes, type="public-key")
+        )
 
-    options = generate_authentication_options(rp_id=RP_ID, allow_credentials=allow_credentials, user_verification="preferred")
-    # store challenge
+    options = generate_authentication_options(
+        rp_id=RP_ID,
+        allow_credentials=allow_credentials,
+        user_verification=UserVerificationRequirement.PREFERRED,  # enum, not "preferred"
+    )
     request.session["webauthn_auth_challenge"] = bytes_to_base64url(options.challenge)
     return JsonResponse(json.loads(options_to_json(options)))
 
 @csrf_exempt
 @require_POST
 def webauthn_auth_complete(request):
-    """
-    Verify assertion and finalize login.
-    Expects client JSON:
-      {
-        id, rawId, type,
-        response: { authenticatorData, clientDataJSON, signature, userHandle }
-      }
-    """
     try:
         body = json.loads(request.body)
     except Exception:
-        return HttpResponseBadRequest("Invalid JSON")
+        return JsonResponse({"ok": False, "error": "Invalid JSON"}, status=400)
 
     expected_challenge_b64 = request.session.get("webauthn_auth_challenge")
     if not expected_challenge_b64:
-        return HttpResponseBadRequest("No auth in progress")
+        return JsonResponse({"ok": False, "error": "No auth in progress"}, status=400)
 
     pending_uid = request.session.get("pending_uid")
     if not pending_uid:
-        return HttpResponseBadRequest("No pending login")
+        return JsonResponse({"ok": False, "error": "No pending login"}, status=400)
 
     user = get_object_or_404(User, id=pending_uid)
     mfa = _get_or_create_mfa(user)
 
-    cred_id = body.get("id")
-    stored_cred = mfa.find_webauthn_credential(cred_id)
-    if not stored_cred:
-        return HttpResponseBadRequest("Unknown credential")
+    # Prefer body.id, but also try rawId (some stacks compare these differently)
+    incoming_id = body.get("id")
+    incoming_raw_id_b64 = body.get("rawId")
+    if not incoming_id and incoming_raw_id_b64:
+        incoming_id = incoming_raw_id_b64  # both are b64url strings on the wire
 
-    # Prepare verification inputs
-    # credential_public_key was stored as base64; decode it back to bytes
+    stored_cred = None
+    for c in (mfa.webauthn_credentials or []):
+        if c.get("id") == incoming_id:
+            stored_cred = c
+            break
+        # also try matching against decoded rawId if needed
+        if incoming_raw_id_b64:
+            try:
+                if c.get("id") == force_str(incoming_raw_id_b64):
+                    stored_cred = c
+                    break
+            except Exception:
+                pass
+
+    if not stored_cred:
+        return JsonResponse({"ok": False, "error": "Unknown credential"}, status=400)
+
     public_key_b64 = stored_cred.get("public_key", "")
     if not public_key_b64:
-        return HttpResponseBadRequest("Stored credential missing public key")
-
+        return JsonResponse({"ok": False, "error": "Stored credential missing public key"}, status=400)
     public_key_bytes = base64.urlsafe_b64decode(public_key_b64 + "==")
 
     try:
         verification = verify_authentication_response(
             credential=body,
-            expected_challenge=base64.urlsafe_b64decode(expected_challenge_b64 + "=="),
+            expected_challenge=base64url_to_bytes(expected_challenge_b64),
             expected_rp_id=RP_ID,
             expected_origin=ORIGIN,
             credential_public_key=public_key_bytes,
@@ -368,11 +394,10 @@ def webauthn_auth_complete(request):
     except Exception as exc:
         return JsonResponse({"ok": False, "error": str(exc)}, status=400)
 
-    # verification.new_sign_count is the updated counter — persist it
+    # Persist counter
     new_sign_count = verification.new_sign_count
-    # Update the stored credential sign_count in-place
     for c in (mfa.webauthn_credentials or []):
-        if c.get("id") == cred_id:
+        if c.get("id") == stored_cred.get("id"):
             c["sign_count"] = new_sign_count
             break
     mfa.save(update_fields=["webauthn_credentials"])

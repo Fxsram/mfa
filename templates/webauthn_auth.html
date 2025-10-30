@@ -5,15 +5,25 @@
 <script src="/static/webauthn.js"></script>
 <script>
   (async () => {
-    document.getElementById("status").textContent = "Requesting assertion options...";
+    const statusEl = document.getElementById("status");
+    statusEl.textContent = "Requesting assertion options...";
     try {
-      const res = await fetch("{% url 'accounts:webauthn_auth_begin' %}");
+      const res = await fetch("{% url 'accounts:webauthn_auth_begin' %}", {
+        credentials: "include"
+      });
       const options = await res.json();
-      options.publicKey.challenge = base64UrlToBuffer(options.publicKey.challenge);
-      if (options.publicKey.allowCredentials) {
-        for (const cred of options.publicKey.allowCredentials) cred.id = base64UrlToBuffer(cred.id);
+
+      // Convert fields on the options object itself
+      options.challenge = base64UrlToBuffer(options.challenge);
+      if (Array.isArray(options.allowCredentials)) {
+        options.allowCredentials = options.allowCredentials.map(c => ({
+          ...c,
+          id: base64UrlToBuffer(c.id),
+        }));
       }
-      const assertion = await navigator.credentials.get({ publicKey: options.publicKey });
+
+      const assertion = await navigator.credentials.get({ publicKey: options });
+
       const authResp = {
         id: assertion.id,
         rawId: bufferToBase64Url(assertion.rawId),
@@ -22,22 +32,31 @@
           authenticatorData: bufferToBase64Url(assertion.response.authenticatorData),
           clientDataJSON: bufferToBase64Url(assertion.response.clientDataJSON),
           signature: bufferToBase64Url(assertion.response.signature),
-          userHandle: assertion.response.userHandle ? bufferToBase64Url(assertion.response.userHandle) : null
-        }
+          userHandle: assertion.response.userHandle
+            ? bufferToBase64Url(assertion.response.userHandle)
+            : null,
+        },
       };
+
       const complete = await fetch("{% url 'accounts:webauthn_auth_complete' %}", {
         method: "POST",
-        headers: { "Content-Type": "application/json", "X-CSRFToken": getCookie("csrftoken") },
+        headers: {
+          "Content-Type": "application/json",
+          "X-CSRFToken": getCookie("csrftoken"),
+        },
+        credentials: "include",
         body: JSON.stringify(authResp),
       });
       const result = await complete.json();
+
       if (complete.ok && result.ok) {
         window.location = "{% url 'accounts:profile' %}";
       } else {
-        document.getElementById("status").textContent = "Authentication failed: " + (result.error || complete.statusText);
+        statusEl.textContent =
+          "Authentication failed: " + (result.error || complete.statusText);
       }
     } catch (err) {
-      document.getElementById("status").textContent = "Error: " + err;
+      statusEl.textContent = "Error: " + err;
     }
   })();
 </script>
