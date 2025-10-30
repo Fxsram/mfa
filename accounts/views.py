@@ -47,9 +47,9 @@ from .models import UserMFA, OTPType
 from .utils import qr_png_base64
 
 # WebAuthn config — set via environment variables in your deployment
-RP_ID = os.environ.get("WEBAUTHN_RP_ID", "192.168.10.3")       # e.g. "example.com"
+RP_ID = os.environ.get("WEBAUTHN_RP_ID", "mfa.pythonanywhere.com")       # e.g. "example.com"
 RP_NAME = os.environ.get("WEBAUTHN_RP_NAME", "MFA Demo")
-ORIGIN = os.environ.get("WEBAUTHN_ORIGIN", "http://192.168.10.3:8000")  # e.g. "https://example.com"
+ORIGIN = os.environ.get("WEBAUTHN_ORIGIN", "https://mfa.pythonanywhere.com/")  # e.g. "https://example.com"
 
 # Helper conversions
 def b64(b: bytes) -> str:
