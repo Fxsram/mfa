@@ -23,17 +23,66 @@
   {% if live_totp %}
     <p>Current TOTP (for testing): <strong>{{ live_totp }}</strong></p>
   {% endif %}
-
 {% elif mfa.otp_type == "WEBAUTHN" %}
   <hr/>
-  <h3>Enroll your passkey</h3>
-  <p>Scan this QR with your phone to finish there:</p>
-  {% if webauthn_qr_data_uri %}
-    <img class="qr" src="{{ webauthn_qr_data_uri }}" alt="WebAuthn QR" width="220" height="220"/>
-    <details><summary>Open directly (debug)</summary>
-      <code style="word-break: break-all;">{{ webauthn_handoff_url }}</code>
-    </details>
-  {% endif %}
-  <p>Or <a href="{% url 'accounts:webauthn_setup' %}">register on this device</a>.</p>
+  <h3>Enroll your biometric authenticator</h3>
+  <p><a href="{% url 'accounts:webauthn_setup' %}">Go to WebAuthn setup page</a>.</p>
+
+{% elif mfa.otp_type == "NCA" %}
+  <hr/>
+  <h3>Enroll your Digital Signature (NCALayer)</h3>
+  <p>Click the button below to open NCALayer and sign a request to link your digital certificate (EDS).</p>
+
+  <script type="module">
+  import { NCALayerClient } from 'ncalayer-js-client';
+
+  async function connectAndSign() {
+    const status = document.getElementById('status');
+    status.textContent = "Connecting to NCALayer...";
+    const client = new NCALayerClient();
+
+    try {
+      await client.connect();
+      status.textContent = "Connected. Please confirm the signature in NCALayer...";
+
+      const payload = btoa(JSON.stringify({
+        action: "link_nca",
+        ts: Date.now()
+      }));
+
+      const signature = await client.basicsSignCMS(
+        NCALayerClient.basicsStorageAll,
+        payload,
+        NCALayerClient.basicsCMSParamsDetached,
+        NCALayerClient.basicsSignerSignAny
+      );
+
+      const res = await fetch("{% url 'accounts:cms_verify_and_login' %}", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-CSRFToken": getCookie("csrftoken") },
+        body: JSON.stringify({ content: payload, signature }),
+      });
+
+      const data = await res.json();
+      if (res.ok && data.bound) {
+        status.textContent = `✅ Digital signature successfully linked (IIN: ${data.iin}).`;
+      } else if (res.ok) {
+        status.textContent = `Signature verified. IIN: ${data.iin}. You can now log in using EDS.`;
+      } else {
+        status.textContent = "Error: " + (data.error || res.statusText);
+      }
+    } catch (e) {
+      status.textContent = "Error: " + e.message;
+    }
+  }
+
+  document.addEventListener("DOMContentLoaded", () => {
+    const btn = document.getElementById("btn-nca");
+    if (btn) btn.addEventListener("click", connectAndSign);
+  });
+  </script>
+
+  <button id="btn-nca">Link Digital Signature (EDS)</button>
+  <p id="status" style="margin-top:10px;"></p>
 {% endif %}
 {% endblock %}
