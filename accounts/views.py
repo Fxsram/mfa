@@ -24,7 +24,7 @@ from django.utils import timezone
 from django.utils.crypto import get_random_string
 from django.utils.encoding import force_str
 from django.views.decorators.http import require_http_methods, require_GET, require_POST, require_safe
-from django.views.decorators.csrf import csrf_exempt
+from django.views.decorators.csrf import csrf_exempt, ensure_csrf_cookie
 from django.http import JsonResponse, HttpResponseBadRequest
 from django.conf import settings
 
@@ -255,7 +255,6 @@ def webauthn_register_begin(request):
     return JsonResponse(json.loads(options_to_json(options)))
 
 @csrf_exempt
-@login_required
 @require_POST
 def webauthn_register_complete(request):
     """
@@ -458,7 +457,8 @@ def webauthn_register_begin_mobile(request):
     request.session["webauthn_reg_challenge"] = bytes_to_base64url(options.challenge)
     return JsonResponse(json.loads(options_to_json(options)))
 
-@login_required
+@ensure_csrf_cookie
+@require_GET
 def webauthn_setup_mobile_page(request):
     """Render the mobile registration page (for when user scanned the QR)."""
     return render(request, "webauthn_setup_mobile.html")
