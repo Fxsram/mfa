@@ -57,7 +57,7 @@ from .utils import qr_png_base64
 
 RP_ID = os.environ.get("WEBAUTHN_RP_ID", "mfa.pythonanywhere.com")       # e.g. "example.com"
 RP_NAME = os.environ.get("WEBAUTHN_RP_NAME", "MFA Demo")
-ORIGIN = os.environ.get("WEBAUTHN_ORIGIN", "https://mfa.pythonanywhere.com/")
+ORIGIN = os.environ.get("WEBAUTHN_ORIGIN", "https://mfa.pythonanywhere.com")
 # Helper conversions
 def b64(b: bytes) -> str:
     return base64.urlsafe_b64encode(b).rstrip(b"=").decode("ascii")
