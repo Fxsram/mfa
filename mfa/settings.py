@@ -62,13 +62,13 @@ WSGI_APPLICATION = "mfa.wsgi.application"
 #     }
 # }
 DATABASES = {
-    'default': {
-        'ENGINE': 'django.db.backends.postgresql_psycopg2',
-        'NAME': 'mfa',
-        'USER': 'eotw_user',
-        'PASSWORD': 'eotw_pwd',
-        'HOST': 'dev.safety.ecodata.space',
-        'PORT': '5432',
+    "default": {
+        "ENGINE": "django.db.backends.mysql",
+        "NAME": "mfa$default",
+        "USER": "mfa",
+        "PASSWORD": "Qwerty123!",
+        "HOST": "mfa.mysql.pythonanywhere-services.com",
+        "PORT": "3306",
     }
 }
 # DATABASE_URL='postgresql://neondb_owner:npg_q2YczhkmjZ1x@ep-dark-mouse-agi00mzt.c-2.eu-central-1.aws.neon.tech/neondb?sslmode=require&channel_binding=require'
