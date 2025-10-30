@@ -1,0 +1,51 @@
+{% extends "base.html" %}
+{% block content %}
+<h2>Register a biometric authenticator</h2>
+<p>Click the button and follow your device prompts (TouchID, Windows Hello, Security Key).</p>
+<label for="cred-name">This device name (optional)</label>
+<input id="cred-name" placeholder="e.g. My phone" />
+<button id="register-btn">Register authenticator</button>
+<p id="status"></p>
+<script src="/static/webauthn.js"></script>
+<script>
+  document.getElementById("register-btn").addEventListener("click", async () => {
+    const name = document.getElementById("cred-name").value || "Authenticator";
+    document.getElementById("status").textContent = "Starting registration...";
+    try {
+      const res = await fetch("{% url 'accounts:webauthn_register_begin' %}");
+      const options = await res.json();
+
+      options.publicKey.challenge = base64UrlToBuffer(options.publicKey.challenge);
+      options.publicKey.user.id = base64UrlToBuffer(options.publicKey.user.id);
+
+      const cred = await navigator.credentials.create({ publicKey: options.publicKey });
+
+      const attestation = {
+        id: cred.id,
+        rawId: bufferToBase64Url(cred.rawId),
+        type: cred.type,
+        response: {
+          clientDataJSON: bufferToBase64Url(cred.response.clientDataJSON),
+          attestationObject: bufferToBase64Url(cred.response.attestationObject),
+        },
+        name: name
+      };
+
+      const complete = await fetch("{% url 'accounts:webauthn_register_complete' %}", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-CSRFToken": getCookie("csrftoken") },
+        body: JSON.stringify(attestation),
+      });
+      const result = await complete.json();
+      if (complete.ok && result.ok) {
+        document.getElementById("status").textContent = "Registration successful.";
+        window.location = "{% url 'accounts:profile' %}";
+      } else {
+        document.getElementById("status").textContent = "Registration failed: " + (result.error || complete.statusText);
+      }
+    } catch (err) {
+      document.getElementById("status").textContent = "Error: " + err;
+    }
+  });
+</script>
+{% endblock %}

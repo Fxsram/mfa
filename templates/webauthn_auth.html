@@ -1,0 +1,44 @@
+{% extends "base.html" %}
+{% block content %}
+<h2>Authenticate with your registered authenticator</h2>
+<p id="status">Starting...</p>
+<script src="/static/webauthn.js"></script>
+<script>
+  (async () => {
+    document.getElementById("status").textContent = "Requesting assertion options...";
+    try {
+      const res = await fetch("{% url 'accounts:webauthn_auth_begin' %}");
+      const options = await res.json();
+      options.publicKey.challenge = base64UrlToBuffer(options.publicKey.challenge);
+      if (options.publicKey.allowCredentials) {
+        for (const cred of options.publicKey.allowCredentials) cred.id = base64UrlToBuffer(cred.id);
+      }
+      const assertion = await navigator.credentials.get({ publicKey: options.publicKey });
+      const authResp = {
+        id: assertion.id,
+        rawId: bufferToBase64Url(assertion.rawId),
+        type: assertion.type,
+        response: {
+          authenticatorData: bufferToBase64Url(assertion.response.authenticatorData),
+          clientDataJSON: bufferToBase64Url(assertion.response.clientDataJSON),
+          signature: bufferToBase64Url(assertion.response.signature),
+          userHandle: assertion.response.userHandle ? bufferToBase64Url(assertion.response.userHandle) : null
+        }
+      };
+      const complete = await fetch("{% url 'accounts:webauthn_auth_complete' %}", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-CSRFToken": getCookie("csrftoken") },
+        body: JSON.stringify(authResp),
+      });
+      const result = await complete.json();
+      if (complete.ok && result.ok) {
+        window.location = "{% url 'accounts:profile' %}";
+      } else {
+        document.getElementById("status").textContent = "Authentication failed: " + (result.error || complete.statusText);
+      }
+    } catch (err) {
+      document.getElementById("status").textContent = "Error: " + err;
+    }
+  })();
+</script>
+{% endblock %}
