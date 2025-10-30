@@ -2,6 +2,7 @@
 {% block content %}
 <h2>Authenticate with your registered authenticator</h2>
 <p id="status">Starting...</p>
+    {% load static %}
 <script src="/static/webauthn.js"></script>
 <script>
   (async () => {

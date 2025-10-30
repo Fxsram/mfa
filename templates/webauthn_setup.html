@@ -6,21 +6,19 @@
 <input id="cred-name" placeholder="e.g. My phone" />
 <button id="register-btn">Register authenticator</button>
 <p id="status"></p>
+        {% load static %}
 <script src="/static/webauthn.js"></script>
 <script>
   document.getElementById("register-btn").addEventListener("click", async () => {
-    const name = document.getElementById("cred-name").value || "Authenticator";
     const statusEl = document.getElementById("status");
-    statusEl.textContent = "Starting registration...";
     try {
-      const res = await fetch("{% url 'accounts:webauthn_register_begin' %}", {
-        credentials: "include"
-      });
+      ensureWebAuthn();  // guard
+
+      const res = await fetch("{% url 'accounts:webauthn_register_begin' %}", { credentials: "include" });
       const options = await res.json();
 
-      // Convert fields on the options object itself
       options.challenge = base64UrlToBuffer(options.challenge);
-      options.user.id = base64UrlToBuffer(options.user.id);
+      options.user.id  = base64UrlToBuffer(options.user.id);
 
       const cred = await navigator.credentials.create({ publicKey: options });
 
@@ -32,15 +30,12 @@
           clientDataJSON: bufferToBase64Url(cred.response.clientDataJSON),
           attestationObject: bufferToBase64Url(cred.response.attestationObject),
         },
-        name: name,
+        name: document.getElementById("cred-name").value || "Authenticator",
       };
 
       const complete = await fetch("{% url 'accounts:webauthn_register_complete' %}", {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "X-CSRFToken": getCookie("csrftoken"),
-        },
+        headers: { "Content-Type": "application/json", "X-CSRFToken": getCookie("csrftoken") },
         credentials: "include",
         body: JSON.stringify(attestation),
       });
@@ -50,11 +45,10 @@
         statusEl.textContent = "Registration successful.";
         window.location = "{% url 'accounts:profile' %}";
       } else {
-        statusEl.textContent =
-          "Registration failed: " + (result.error || complete.statusText);
+        statusEl.textContent = "Registration failed: " + (result.error || complete.statusText);
       }
     } catch (err) {
-      statusEl.textContent = "Error: " + err;
+      statusEl.textContent = "Error: " + err.message;
     }
   });
 </script>
