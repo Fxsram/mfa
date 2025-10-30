@@ -3,17 +3,21 @@
 {% block content %}
 <h2>Register a passkey on this device</h2>
 <p id="status">Preparing…</p>
-<script src="{% static 'webauthn.js' %}"></script>
+
+<!-- Load helpers FIRST -->
+<script src="{% static 'webauthn.js' %}?v=1"></script>
+
+<!-- Now your inline script can call ensureWebAuthn -->
 <script>
 (async () => {
   const status = document.getElementById("status");
   try {
-    ensureWebAuthn();
+    ensureWebAuthn();               // <-- now defined
     const res = await fetch("{% url 'accounts:webauthn_register_begin_mobile' %}", { credentials: "include" });
     if (!res.ok) throw new Error("Failed to start");
     const options = await res.json();
     options.challenge = base64UrlToBuffer(options.challenge);
-    options.user.id = base64UrlToBuffer(options.user.id);
+    options.user.id   = base64UrlToBuffer(options.user.id);
     const cred = await navigator.credentials.create({ publicKey: options });
     const attestation = {
       id: cred.id,
@@ -32,8 +36,9 @@
       body: JSON.stringify(attestation),
     });
     const result = await complete.json();
-    if (complete.ok && result.ok) status.textContent = "Registration successful. You can close this tab.";
-    else status.textContent = "Registration failed: " + (result.error || complete.statusText);
+    status.textContent = (complete.ok && result.ok)
+      ? "Registration successful. You can close this tab."
+      : "Registration failed: " + (result.error || complete.statusText);
   } catch (e) {
     status.textContent = "Error: " + e.message;
   }
