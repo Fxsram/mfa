@@ -12,6 +12,8 @@ Environment variables (set in deployment):
     WEBAUTHN_ORIGIN   (e.g. https://example.com)
     WEBAUTHN_RP_NAME  (optional friendly name)
 """
+import tempfile
+
 from django.contrib import messages
 from django.contrib.auth import authenticate, login, logout
 from django.contrib.auth.decorators import login_required
@@ -48,8 +50,14 @@ from webauthn.helpers.structs import PublicKeyCredentialDescriptor, UserVerifica
 
 from .forms import RegisterForm, LoginForm, OTPSetupForm, OTPVerifyForm
 from .models import UserMFA, OTPType
-from .utils import qr_png_base64
-
+from .utils import qr_png_base64, parse_cms_get_subject_and_iin
+import base64, json, subprocess, tempfile, os, shlex
+from django.views.decorators.http import require_POST
+from django.views.decorators.csrf import csrf_exempt
+from django.contrib.auth import login
+from django.http import JsonResponse, HttpResponseBadRequest
+from .models import UserMFA
+from .utils import parse_cms_get_subject_and_iin
 # WebAuthn config — set via environment variables in your deployment
 # RP_ID = os.environ.get("WEBAUTHN_RP_ID", "localhost")       # e.g. "example.com"
 # RP_NAME = os.environ.get("WEBAUTHN_RP_NAME", "MFA Demo")
@@ -449,3 +457,88 @@ def webauthn_register_begin_mobile(request):
 def webauthn_setup_mobile_page(request):
     """Render the mobile registration page (for when user scanned the QR)."""
     return render(request, "webauthn_setup_mobile.html")
+
+
+def _openssl_verify_detached(signature_pem: str, content_bytes: bytes) -> tuple[bool, str]:
+    """
+    Возвращает (ok, stderr_text)
+    Используем detached verify, не проверяя цепочку (NCALayer уже выбрал ключ).
+    """
+    with tempfile.TemporaryDirectory() as td:
+        sig_path = os.path.join(td, "sig.pem")
+        dat_path = os.path.join(td, "content.bin")
+        with open(sig_path, "w", encoding="utf-8") as f:
+            f.write(signature_pem)
+        with open(dat_path, "wb") as f:
+            f.write(content_bytes)
+
+        # -verify      : проверить подпись
+        # -in sig.pem  : CMS (PEM)
+        # -content ... : Detached content
+        # -noverify -no_signer_cert_verify : не валидируем цепочку/OCSP (достаточно для аутентификации)
+        # -purpose any : глушим требования OpenSSL по назначению
+        cmd = f"openssl cms -verify -inform PEM -in {shlex.quote(sig_path)} -content {shlex.quote(dat_path)} -noverify -no_signer_cert_verify -purpose any -nosmimecap -out /dev/null"
+        proc = subprocess.run(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        ok = proc.returncode == 0
+        return ok, (proc.stderr or "").strip()
+
+@csrf_exempt
+@require_POST
+def cms_verify_and_login(request):
+    """
+    JSON in: { content: <base64>, signature: <PEM CMS> }
+    JSON out: { detail, iin, bound: bool, logged_in: bool }
+    """
+    try:
+        payload = json.loads(request.body.decode("utf-8"))
+        b64 = payload.get("content") or ""
+        signature_pem = payload.get("signature") or ""
+        if not b64 or not signature_pem:
+            return HttpResponseBadRequest("content and signature are required")
+        content_bytes = base64.b64decode(b64)
+    except Exception as e:
+        return HttpResponseBadRequest(f"Invalid JSON or base64: {e}")
+
+    # 1) проверяем подпись (detached)
+    ok, err = _openssl_verify_detached(signature_pem, content_bytes)
+    if not ok:
+        return JsonResponse({"detail": "Signature verify failed", "error": err}, status=400)
+
+    # 2) парсим CMS, извлекаем ИИН
+    parsed = parse_cms_get_subject_and_iin(signature_pem, cert_type="personal")
+    if not parsed["success"]:
+        return JsonResponse({"detail": "CMS parse error", "error": parsed["payload"]["error"]}, status=400)
+
+    iin = parsed["payload"]["iin"]
+    if not iin:
+        return JsonResponse({"detail": "IIN not found in certificate"}, status=400)
+
+    # 3) ищем пользователя по ИИН
+    mfa = UserMFA.objects.filter(iin=iin).select_related("user").first()
+    if mfa:
+        login(request, mfa.user)
+        return JsonResponse({"detail": "OK", "iin": iin, "bound": True, "logged_in": True})
+
+    # 4) если пользователь уже залогинен — привяжем ему этот ИИН
+    if request.user.is_authenticated:
+        me = UserMFA.objects.get_or_create(user=request.user)[0]
+        if me.iin and me.iin != iin:
+            return JsonResponse({"detail": "This account already bound to another IIN", "iin": me.iin}, status=409)
+        me.iin = iin
+        me.last_cert_subject = parsed["payload"]["subject"]
+        me.save(update_fields=["iin", "last_cert_subject"])
+        return JsonResponse({"detail": "IIN bound to current user", "iin": iin, "bound": True, "logged_in": True})
+
+    # 5) иначе просто вернём ИИН — фронт решит, что делать (например, предложить логин/привязку)
+    return JsonResponse({"detail": "IIN extracted", "iin": iin, "bound": False, "logged_in": False})
+
+
+@login_required
+def nca_setup_page(request):
+    """Show page to register a digital signature (NCALayer)."""
+    return render(request, "accounts/mfa_ncalayer_setup.html")
+
+@require_GET
+def nca_auth_page(request):
+    """Show page for signing in via NCALayer."""
+    return render(request, "accounts/mfa_ncalayer_auth.html")

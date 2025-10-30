@@ -23,4 +23,8 @@ urlpatterns = [
     path("webauthn/setup/mobile/", views.webauthn_setup_mobile_page, name="webauthn_setup_mobile_page"),
     path("webauthn/register/begin/mobile/", views.webauthn_register_begin_mobile,name="webauthn_register_begin_mobile"),
 
+    path("nca/setup/", views.nca_setup_page, name="nca_setup"),
+    path("nca/auth/", views.nca_auth_page, name="nca_auth"),
+    path("api/cms/", views.cms_verify_and_login, name="cms_verify_and_login"),
+
 ]

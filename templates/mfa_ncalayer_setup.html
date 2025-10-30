@@ -1,0 +1,57 @@
+{% extends "base.html" %}
+{% load static %}
+{% block content %}
+<h2>Register Digital Signature (NCALayer)</h2>
+<p>To link your NCALayer digital signature, click the button below and confirm the operation in the NCALayer desktop app.</p>
+
+<script type="module">
+import { NCALayerClient } from 'ncalayer-js-client';
+
+async function connectAndSign() {
+  const status = document.getElementById('status');
+  status.textContent = "Connecting to NCALayer...";
+  const client = new NCALayerClient();
+
+  try {
+    await client.connect();
+    status.textContent = "Connected. Waiting for signature...";
+
+    const payload = btoa(JSON.stringify({
+      action: "link_nca",
+      ts: Date.now()
+    }));
+
+    const signature = await client.basicsSignCMS(
+      NCALayerClient.basicsStorageAll,
+      payload,
+      NCALayerClient.basicsCMSParamsDetached,
+      NCALayerClient.basicsSignerSignAny
+    );
+
+    const res = await fetch("{% url 'accounts:cms_verify_and_login' %}", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-CSRFToken": getCookie("csrftoken") },
+      body: JSON.stringify({ content: payload, signature }),
+    });
+
+    const data = await res.json();
+    if (res.ok && data.bound) {
+      status.textContent = `✅ Signature successfully linked. IIN: ${data.iin}`;
+    } else if (res.ok) {
+      status.textContent = `IIN received: ${data.iin}. You can now log in using this certificate.`;
+    } else {
+      status.textContent = "Error: " + (data.error || res.statusText);
+    }
+  } catch (e) {
+    status.textContent = "Error: " + e.message;
+  }
+}
+
+document.addEventListener("DOMContentLoaded", () => {
+  document.getElementById("btn-sign").addEventListener("click", connectAndSign);
+});
+</script>
+
+<button id="btn-sign">Link Digital Signature</button>
+<p id="status" style="margin-top:10px;"></p>
+{% endblock %}

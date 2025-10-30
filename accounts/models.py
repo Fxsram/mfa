@@ -10,6 +10,7 @@ class OTPType(models.TextChoices):
     TOTP = "TOTP", "Time-based (TOTP)"
     HOTP = "HOTP", "Counter-based (HOTP)"
     WEBAUTHN = "WEBAUTHN", "Biometric / WebAuthn"
+    NCA = "NCA", "Digital Signature (NCALayer)"
 
 class UserMFA(models.Model):
     user = models.OneToOneField(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="mfa")
@@ -22,7 +23,8 @@ class UserMFA(models.Model):
 
     # HOTP counter (only used when otp_type == HOTP)
     hotp_counter = models.PositiveIntegerField(default=0)
-
+    iin = models.CharField(max_length=12, null=True, blank=True, unique=True)
+    last_cert_subject = models.JSONField(null=True, blank=True)
     issuer = models.CharField(max_length=64, default="PyOTP-MFA-Demo")
 
     created_at = models.DateTimeField(auto_now_add=True)

@@ -17,3 +17,4 @@ tzdata==2025.2
 webauthn==2.7.0
 
 PyMySQL~=1.1.2
+pem~=23.1.0
