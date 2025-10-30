@@ -51,13 +51,23 @@ TEMPLATES = [
 WSGI_APPLICATION = "mfa.wsgi.application"
 
 
+# DATABASES = {
+#     'default': {
+#         'ENGINE': 'django.db.backends.postgresql_psycopg2',
+#         'NAME': 'mfa',
+#         'USER': 'postgres',
+#         'PASSWORD': '{6CEvDxh>`gBNLKT',
+#         'HOST': '34.100.212.252',
+#         'PORT': '5432',
+#     }
+# }
 DATABASES = {
     'default': {
         'ENGINE': 'django.db.backends.postgresql_psycopg2',
         'NAME': 'mfa',
         'USER': 'postgres',
-        'PASSWORD': '{6CEvDxh>`gBNLKT',
-        'HOST': '34.100.212.252',
+        'PASSWORD': 'qwerty123',
+        'HOST': 'localhost',
         'PORT': '5432',
     }
 }
