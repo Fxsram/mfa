@@ -61,6 +61,10 @@ WSGI_APPLICATION = "mfa.wsgi.application"
 #         'PORT': '5432',
 #     }
 # }
+
+import pymysql
+pymysql.install_as_MySQLdb()
+
 DATABASES = {
     "default": {
         "ENGINE": "django.db.backends.mysql",
@@ -69,6 +73,11 @@ DATABASES = {
         "PASSWORD": "Qwerty123!",
         "HOST": "mfa.mysql.pythonanywhere-services.com",
         "PORT": "3306",
+        "OPTIONS": {
+            "charset": "utf8mb4",
+            "init_command": "SET sql_mode='STRICT_TRANS_TABLES'",
+        },
+        "CONN_MAX_AGE": 60,
     }
 }
 # DATABASE_URL='postgresql://neondb_owner:npg_q2YczhkmjZ1x@ep-dark-mouse-agi00mzt.c-2.eu-central-1.aws.neon.tech/neondb?sslmode=require&channel_binding=require'
