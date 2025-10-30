@@ -110,6 +110,8 @@ def login_view(request):
                 return redirect("accounts:otp_verify")
             if mfa.otp_type == OTPType.WEBAUTHN:
                 return redirect("accounts:webauthn_auth")
+            if mfa.otp_type == OTPType.NCA:
+                return redirect("accounts:nca_auth")
             # else straight login (MFA disabled)
             login(request, user)
             return redirect("accounts:profile")
