@@ -457,3 +457,8 @@ def webauthn_register_begin_mobile(request):
     )
     request.session["webauthn_reg_challenge"] = bytes_to_base64url(options.challenge)
     return JsonResponse(json.loads(options_to_json(options)))
+
+@login_required
+def webauthn_setup_mobile_page(request):
+    """Render the mobile registration page (for when user scanned the QR)."""
+    return render(request, "webauthn_setup_mobile.html")

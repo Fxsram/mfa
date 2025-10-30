@@ -20,7 +20,7 @@ urlpatterns = [
     path("webauthn/auth/complete/", views.webauthn_auth_complete, name="webauthn_auth_complete"),
 
     path("webauthn/handoff/<str:token>/", views.webauthn_handoff_landing, name="webauthn_handoff_landing"),
-    # path("webauthn/setup/mobile/", views.webauthn_setup_mobile_page, name="webauthn_setup_mobile_page"),
+    path("webauthn/setup/mobile/", views.webauthn_setup_mobile_page, name="webauthn_setup_mobile_page"),
     path("webauthn/register/begin/mobile/", views.webauthn_register_begin_mobile,name="webauthn_register_begin_mobile"),
 
 ]
