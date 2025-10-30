@@ -257,65 +257,66 @@ def webauthn_register_begin(request):
 @csrf_exempt
 @require_POST
 def webauthn_register_complete(request):
-    """
-    Verify attestation and persist the credential public key and sign count.
-    Expects client JSON:
-      {
-        id, rawId, type,
-        response: { clientDataJSON (b64), attestationObject (b64) },
-        name: <optional display name>
-      }
-    """
+    # 1) Parse
     try:
-        body = json.loads(request.body)
+        body = json.loads(request.body.decode("utf-8"))
     except Exception:
-        return HttpResponseBadRequest("Invalid JSON")
+        return JsonResponse({"ok": False, "stage": "parse", "error": "Invalid JSON"}, status=400)
 
     expected_challenge_b64 = request.session.get("webauthn_reg_challenge")
     if not expected_challenge_b64:
-        return HttpResponseBadRequest("No registration in progress")
+        return JsonResponse({"ok": False, "stage": "challenge", "error": "No registration in progress"}, status=400)
 
-    # duo-labs verify_registration_response expects the response object and several expected values
+    # 2) Pick target user (mobile handoff or logged-in)
+    target_uid = request.session.get("webauthn_enroll_uid") or (request.user.id if request.user.is_authenticated else None)
+    if not target_uid:
+        return JsonResponse({"ok": False, "stage": "user", "error": "No enrollment user in session"}, status=400)
+    user = get_object_or_404(User, id=target_uid)
+    mfa = _get_or_create_mfa(user)
+
+    # 3) Verify attestation
     try:
         verification = verify_registration_response(
             credential=body,
-            expected_challenge=base64.urlsafe_b64decode(expected_challenge_b64 + "=="),
-            expected_origin=ORIGIN,
-            expected_rp_id=RP_ID,
-            require_user_verification=True,
+            expected_challenge=base64url_to_bytes(expected_challenge_b64),
+            expected_origin=ORIGIN,     # e.g. https://mfa.pythonanywhere.com  (NO trailing slash)
+            expected_rp_id=RP_ID,       # e.g. mfa.pythonanywhere.com
+            require_user_verification=False,   # or True if you want strict UV
         )
     except Exception as exc:
-        return JsonResponse({"ok": False, "error": str(exc)}, status=400)
+        return JsonResponse({"ok": False, "stage": "verify", "error": str(exc)}, status=400)
 
-    # verification contains credential_id (base64url), credential_public_key (COSE/bytes), sign_count (int)
-    cred_id_b64 = verification.credential_id
-    public_key_bytes = verification.credential_public_key
-    sign_count = verification.sign_count
+    # 4) Normalize everything to JSON-safe strings
+    # credential_id may be bytes or str depending on library/version
+    cred_id_bytes = verification.credential_id
+    if isinstance(cred_id_bytes, str):
+        cred_id_b64 = cred_id_bytes  # already base64url in some builds
+    else:
+        cred_id_b64 = bytes_to_base64url(cred_id_bytes)
 
-    # store public key as base64 (urlsafe) for persistence
-    public_key_b64 = base64.urlsafe_b64encode(public_key_bytes).rstrip(b"=").decode("ascii")
+    pubkey_bytes = verification.credential_public_key  # bytes
+    public_key_b64 = base64.urlsafe_b64encode(pubkey_bytes).rstrip(b"=").decode("ascii")
+
+    sign_count = int(verification.sign_count or 0)
 
     cred = {
-        "id": cred_id_b64,
-        "public_key": public_key_b64,
-        "sign_count": sign_count,
+        "id": cred_id_b64,                 # base64url string
+        "public_key": public_key_b64,      # base64url string
+        "sign_count": sign_count,          # int
         "transports": body.get("transports", []),
         "name": body.get("name", "Authenticator"),
     }
-    target_uid = request.session.get("webauthn_enroll_uid") or (
-        request.user.id if request.user.is_authenticated else None)
-    if not target_uid:
-        return JsonResponse({"ok": False, "error": "No enrollment user in session."}, status=400)
-    user = get_object_or_404(User, id=target_uid)
-    mfa = _get_or_create_mfa(user)
+
+    # 5) Persist to JSONField (bytes-free)
     mfa.add_webauthn_credential(cred)
     mfa.otp_type = OTPType.WEBAUTHN
     mfa.save(update_fields=["otp_type", "webauthn_credentials"])
 
-    # Clear registration challenge
+    # 6) Cleanup session markers
     request.session.pop("webauthn_reg_challenge", None)
     request.session.pop("webauthn_enroll_uid", None)
     request.session.pop("webauthn_enroll_at", None)
+
     return JsonResponse({"ok": True})
 
 @require_GET
