@@ -23,19 +23,17 @@
   {% if live_totp %}
     <p>Current TOTP (for testing): <strong>{{ live_totp }}</strong></p>
   {% endif %}
+
 {% elif mfa.otp_type == "WEBAUTHN" %}
   <hr/>
   <h3>Enroll your passkey</h3>
-  <p>
-    <a class="btn" href="{% url 'accounts:webauthn_setup' %}">Register on this device</a>
-  </p>
-  <p>Or scan this QR with your phone to open the WebAuthn enrollment page:</p>
+  <p>Scan this QR with your phone to finish there:</p>
   {% if webauthn_qr_data_uri %}
     <img class="qr" src="{{ webauthn_qr_data_uri }}" alt="WebAuthn QR" width="220" height="220"/>
-    <p class="muted">If the phone isn’t signed in to this site, it may ask you to log in first.</p>
-    <details><summary>Open on phone (debug)</summary>
-      <code style="word-break: break-all;">{{ webauthn_setup_url }}</code>
+    <details><summary>Open directly (debug)</summary>
+      <code style="word-break: break-all;">{{ webauthn_handoff_url }}</code>
     </details>
   {% endif %}
+  <p>Or <a href="{% url 'accounts:webauthn_setup' %}">register on this device</a>.</p>
 {% endif %}
 {% endblock %}

@@ -16,10 +16,14 @@ from django.contrib import messages
 from django.contrib.auth import authenticate, login, logout
 from django.contrib.auth.decorators import login_required
 from django.contrib.auth.models import User
+from django.core import signing
+from django.core.cache import cache
 from django.shortcuts import redirect, render, get_object_or_404
 from django.urls import reverse
+from django.utils import timezone
+from django.utils.crypto import get_random_string
 from django.utils.encoding import force_str
-from django.views.decorators.http import require_http_methods, require_GET, require_POST
+from django.views.decorators.http import require_http_methods, require_GET, require_POST, require_safe
 from django.views.decorators.csrf import csrf_exempt
 from django.http import JsonResponse, HttpResponseBadRequest
 from django.conf import settings
@@ -47,10 +51,13 @@ from .models import UserMFA, OTPType
 from .utils import qr_png_base64
 
 # WebAuthn config — set via environment variables in your deployment
+# RP_ID = os.environ.get("WEBAUTHN_RP_ID", "localhost")       # e.g. "example.com"
+# RP_NAME = os.environ.get("WEBAUTHN_RP_NAME", "MFA Demo")
+# ORIGIN = os.environ.get("WEBAUTHN_ORIGIN", "http://localhost:8000")  # e.g. "https://example.com"
+
 RP_ID = os.environ.get("WEBAUTHN_RP_ID", "mfa.pythonanywhere.com")       # e.g. "example.com"
 RP_NAME = os.environ.get("WEBAUTHN_RP_NAME", "MFA Demo")
-ORIGIN = os.environ.get("WEBAUTHN_ORIGIN", "https://mfa.pythonanywhere.com/")  # e.g. "https://example.com"
-
+ORIGIN = os.environ.get("WEBAUTHN_ORIGIN", "https://mfa.pythonanywhere.com/")
 # Helper conversions
 def b64(b: bytes) -> str:
     return base64.urlsafe_b64encode(b).rstrip(b"=").decode("ascii")
@@ -189,11 +196,14 @@ def otp_setup_view(request):
 
     # NEW: WebAuthn QR to open the built-in setup page on another device
     webauthn_qr_data_uri = ""
-    webauthn_setup_url = ""
+    webauthn_handoff_url = ""
     if mfa.otp_type == OTPType.WEBAUTHN:
-        setup_path = reverse("accounts:webauthn_setup")  # uses your existing URL
-        webauthn_setup_url = f"{ORIGIN}{setup_path}"
-        webauthn_qr_data_uri = qr_png_base64(webauthn_setup_url)
+        payload = {"uid": request.user.id, "nonce": get_random_string(16), "ts": int(timezone.now().timestamp())}
+        token = signing.dumps(payload, salt="webauthn-handoff")
+        cache.set(f"webauthn:handoff:{token}:unused", True, timeout=300)  # 5 min
+        handoff_path = reverse("accounts:webauthn_handoff_landing", args=[token])
+        webauthn_handoff_url = f"{ORIGIN}{handoff_path}"
+        webauthn_qr_data_uri = qr_png_base64(webauthn_handoff_url)
 
     return render(
         request,
@@ -204,9 +214,9 @@ def otp_setup_view(request):
             "provisioning_uri": provisioning_uri,
             "qr_data_uri": qr_data_uri,
             "live_totp": live_totp,
-            # NEW context for WebAuthn
+            # new:
             "webauthn_qr_data_uri": webauthn_qr_data_uri,
-            "webauthn_setup_url": webauthn_setup_url,
+            "webauthn_handoff_url": webauthn_handoff_url,
         },
     )
 
@@ -293,14 +303,20 @@ def webauthn_register_complete(request):
         "transports": body.get("transports", []),
         "name": body.get("name", "Authenticator"),
     }
-
-    mfa = _get_or_create_mfa(request.user)
+    target_uid = request.session.get("webauthn_enroll_uid") or (
+        request.user.id if request.user.is_authenticated else None)
+    if not target_uid:
+        return JsonResponse({"ok": False, "error": "No enrollment user in session."}, status=400)
+    user = get_object_or_404(User, id=target_uid)
+    mfa = _get_or_create_mfa(user)
     mfa.add_webauthn_credential(cred)
     mfa.otp_type = OTPType.WEBAUTHN
     mfa.save(update_fields=["otp_type", "webauthn_credentials"])
 
     # Clear registration challenge
     request.session.pop("webauthn_reg_challenge", None)
+    request.session.pop("webauthn_enroll_uid", None)
+    request.session.pop("webauthn_enroll_at", None)
     return JsonResponse({"ok": True})
 
 @require_GET
@@ -407,3 +423,37 @@ def webauthn_auth_complete(request):
     request.session.pop("pending_uid", None)
     login(request, user)
     return JsonResponse({"ok": True})
+
+
+
+
+@require_safe
+def webauthn_handoff_landing(request, token: str):
+    # one-time token to bind this (phone) session to the desktop user
+    if not cache.get(f"webauthn:handoff:{token}:unused"):
+        return HttpResponseBadRequest("This link is no longer valid.")
+    try:
+        data = signing.loads(token, salt="webauthn-handoff", max_age=300)
+    except signing.BadSignature:
+        return HttpResponseBadRequest("Invalid or expired link.")
+    cache.delete(f"webauthn:handoff:{token}:unused")
+    request.session["webauthn_enroll_uid"] = int(data["uid"])
+    request.session["webauthn_enroll_at"] = timezone.now().isoformat()
+    return redirect("accounts:webauthn_setup_mobile_page")
+
+@require_GET
+def webauthn_register_begin_mobile(request):
+    uid = request.session.get("webauthn_enroll_uid")
+    if not uid:
+        return HttpResponseBadRequest("No enrollment session.")
+    user = get_object_or_404(User, id=uid)
+    options = generate_registration_options(
+        rp_name=RP_NAME,
+        rp_id=RP_ID,
+        user_name=user.username,
+        user_id=str(user.id).encode("utf-8"),
+        attestation=AttestationConveyancePreference.DIRECT,
+        supported_pub_key_algs=[-7, -257],  # ECDSA_SHA_256, RSASSA_PKCS1_v1_5_SHA_256
+    )
+    request.session["webauthn_reg_challenge"] = bytes_to_base64url(options.challenge)
+    return JsonResponse(json.loads(options_to_json(options)))
