@@ -41,7 +41,7 @@ from webauthn import (
     verify_authentication_response,
 )
 from webauthn.helpers import bytes_to_base64url, base64url_to_bytes
-from webauthn.helpers.structs import AttestationConveyancePreference
+from webauthn.helpers.structs import AttestationConveyancePreference, PublicKeyCredentialType
 from webauthn.helpers.cose import COSEAlgorithmIdentifier
 from webauthn.helpers.structs import PublicKeyCredentialDescriptor, UserVerificationRequirement, \
     AttestationConveyancePreference
@@ -325,7 +325,6 @@ def webauthn_auth_page(request):
     return render(request, "webauthn_auth.html", {})
 
 @require_GET
-@require_GET
 def webauthn_auth_begin(request):
     pending_uid = request.session.get("pending_uid")
     if not pending_uid:
@@ -334,19 +333,23 @@ def webauthn_auth_begin(request):
     user = get_object_or_404(User, id=pending_uid)
     mfa = _get_or_create_mfa(user)
 
-    # IDs must be raw bytes for the options object
-    allow_credentials = []
+    # Build proper descriptors (bytes id + enum type)
+    allow_credentials: list[PublicKeyCredentialDescriptor] = []
     for c in (mfa.webauthn_credentials or []):
         cred_id_bytes = base64url_to_bytes(c.get("id"))
         allow_credentials.append(
-            PublicKeyCredentialDescriptor(id=cred_id_bytes, type="public-key")
+            PublicKeyCredentialDescriptor(
+                id=cred_id_bytes,
+                type=PublicKeyCredentialType.PUBLIC_KEY,   # <<< enum, not str
+            )
         )
 
     options = generate_authentication_options(
         rp_id=RP_ID,
         allow_credentials=allow_credentials,
-        user_verification=UserVerificationRequirement.PREFERRED,  # enum, not "preferred"
+        user_verification=UserVerificationRequirement.PREFERRED,
     )
+
     request.session["webauthn_auth_challenge"] = bytes_to_base64url(options.challenge)
     return JsonResponse(json.loads(options_to_json(options)))
 
@@ -354,47 +357,30 @@ def webauthn_auth_begin(request):
 @require_POST
 def webauthn_auth_complete(request):
     try:
-        body = json.loads(request.body)
+        body = json.loads(request.body.decode("utf-8"))
     except Exception:
-        return JsonResponse({"ok": False, "error": "Invalid JSON"}, status=400)
+        return HttpResponseBadRequest("Invalid JSON")
 
     expected_challenge_b64 = request.session.get("webauthn_auth_challenge")
     if not expected_challenge_b64:
-        return JsonResponse({"ok": False, "error": "No auth in progress"}, status=400)
+        return HttpResponseBadRequest("No auth in progress")
 
     pending_uid = request.session.get("pending_uid")
     if not pending_uid:
-        return JsonResponse({"ok": False, "error": "No pending login"}, status=400)
+        return HttpResponseBadRequest("No pending login")
 
     user = get_object_or_404(User, id=pending_uid)
     mfa = _get_or_create_mfa(user)
 
-    # Prefer body.id, but also try rawId (some stacks compare these differently)
-    incoming_id = body.get("id")
-    incoming_raw_id_b64 = body.get("rawId")
-    if not incoming_id and incoming_raw_id_b64:
-        incoming_id = incoming_raw_id_b64  # both are b64url strings on the wire
-
-    stored_cred = None
-    for c in (mfa.webauthn_credentials or []):
-        if c.get("id") == incoming_id:
-            stored_cred = c
-            break
-        # also try matching against decoded rawId if needed
-        if incoming_raw_id_b64:
-            try:
-                if c.get("id") == force_str(incoming_raw_id_b64):
-                    stored_cred = c
-                    break
-            except Exception:
-                pass
-
+    cred_id = body.get("id")
+    stored_cred = mfa.find_webauthn_credential(cred_id)
     if not stored_cred:
-        return JsonResponse({"ok": False, "error": "Unknown credential"}, status=400)
+        return HttpResponseBadRequest("Unknown credential")
 
+    # Decode the stored COSE public key (from base64url) — NOT the challenge
     public_key_b64 = stored_cred.get("public_key", "")
     if not public_key_b64:
-        return JsonResponse({"ok": False, "error": "Stored credential missing public key"}, status=400)
+        return HttpResponseBadRequest("Stored credential missing public key")
     public_key_bytes = base64.urlsafe_b64decode(public_key_b64 + "==")
 
     try:
@@ -402,23 +388,23 @@ def webauthn_auth_complete(request):
             credential=body,
             expected_challenge=base64url_to_bytes(expected_challenge_b64),
             expected_rp_id=RP_ID,
-            expected_origin=ORIGIN,
+            expected_origin=ORIGIN,  # ensure ORIGIN has no trailing slash
             credential_public_key=public_key_bytes,
-            credential_current_sign_count=stored_cred.get("sign_count", 0),
-            require_user_verification=True,
+            credential_current_sign_count=int(stored_cred.get("sign_count", 0)),
+            require_user_verification=True,  # or False if you allow presence-only
         )
     except Exception as exc:
         return JsonResponse({"ok": False, "error": str(exc)}, status=400)
 
-    # Persist counter
-    new_sign_count = verification.new_sign_count
+    # Persist the new sign counter
+    new_sign_count = int(verification.new_sign_count or 0)
     for c in (mfa.webauthn_credentials or []):
-        if c.get("id") == stored_cred.get("id"):
+        if c.get("id") == cred_id:
             c["sign_count"] = new_sign_count
             break
     mfa.save(update_fields=["webauthn_credentials"])
 
-    # Finalize login
+    # Finalize
     request.session.pop("webauthn_auth_challenge", None)
     request.session.pop("pending_uid", None)
     login(request, user)
