@@ -1,57 +1,160 @@
 {% extends "base.html" %}
 {% load static %}
+
+{% block title %}Link Digital Signature (NCALayer){% endblock %}
+
 {% block content %}
-<h2>Register Digital Signature (NCALayer)</h2>
-<p>To link your NCALayer digital signature, click the button below and confirm the operation in the NCALayer desktop app.</p>
+  <h2>Register Digital Signature (NCALayer)</h2>
+  <p class="muted">Click the button below and confirm the operation in your NCALayer desktop app.</p>
 
-<script type="module">
-import { NCALayerClient } from "https://cdn.jsdelivr.net/npm/ncalayer-js-client@1.5.5/lib/index.js";
+  <div class="row">
+    <button id="btn-sign" class="btn" type="button">Link Digital Signature</button>
+    <button id="btn-cancel" class="btn secondary" type="button" hidden>Cancel</button>
+  </div>
 
-async function connectAndSign() {
-  const status = document.getElementById('status');
-  status.textContent = "Connecting to NCALayer...";
-  const client = new NCALayerClient();
+  <p id="status" class="status muted" role="status" aria-live="polite" style="margin-top:10px;">Idle.</p>
 
-  try {
-    await client.connect();
-    status.textContent = "Connected. Waiting for signature...";
+  <!-- Optional: ship a local copy as a fallback (e.g., ncalayer-client.js) -->
+  <!-- <script src="{% static 'ncalayer-client.js' %}"></script> -->
 
-    const payload = btoa(JSON.stringify({
-      action: "link_nca",
-      ts: Date.now()
-    }));
-
-    const signature = await client.basicsSignCMS(
-      NCALayerClient.basicsStorageAll,
-      payload,
-      NCALayerClient.basicsCMSParamsDetached,
-      NCALayerClient.basicsSignerSignAny
-    );
-
-    const res = await fetch("{% url 'accounts:cms_verify_and_login' %}", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "X-CSRFToken": getCookie("csrftoken") },
-      body: JSON.stringify({ content: payload, signature }),
-    });
-
-    const data = await res.json();
-    if (res.ok && data.bound) {
-      status.textContent = `✅ Signature successfully linked. IIN: ${data.iin}`;
-    } else if (res.ok) {
-      status.textContent = `IIN received: ${data.iin}. You can now log in using this certificate.`;
-    } else {
-      status.textContent = "Error: " + (data.error || res.statusText);
-    }
-  } catch (e) {
-    status.textContent = "Error: " + e.message;
+  <script>
+  // --- small helpers ---
+  function getCookie(name){
+    const m=document.cookie.match(new RegExp("(^|; )"+name+"=([^;]*)"));
+    return m?decodeURIComponent(m[2]):null;
   }
-}
+  function setStatus(text, cls="muted"){
+    const el = document.getElementById("status");
+    el.className = "status " + cls;
+    el.textContent = text;
+  }
+  function busy(isBusy){
+    const sign = document.getElementById("btn-sign");
+    const cancel = document.getElementById("btn-cancel");
+    sign.disabled = isBusy;
+    sign.textContent = isBusy ? "Working…" : "Link Digital Signature";
+    cancel.hidden = !isBusy;
+  }
 
-document.addEventListener("DOMContentLoaded", () => {
-  document.getElementById("btn-sign").addEventListener("click", connectAndSign);
-});
-</script>
+  function ensureSecureContext(){
+    const ok = location.protocol==="https:" || location.hostname==="localhost";
+    if(!ok) throw new Error("NCALayer integration requires HTTPS (or http://localhost).");
+  }
 
-<button id="btn-sign">Link Digital Signature</button>
-<p id="status" style="margin-top:10px;"></p>
+  // Try to load NCALayer client from a few locations.
+  async function loadNCALayerModule(){
+    // Ordered candidates. First that loads wins.
+    const urls = [
+      "https://cdn.jsdelivr.net/npm/ncalayer-js-client@1.5.5/lib/ncalayer-client.js",
+      "https://unpkg.com/ncalayer-js-client@1.5.5/lib/ncalayer-client.js",
+      // If you ship locally, uncomment and use an absolute/static path:
+      // new URL("{% static 'ncalayer-client.js' %}", location.origin).toString(),
+    ];
+
+    // If library is already on window (non-module build), use it.
+    if (window.NCALayerClient) return { NCALayerClient: window.NCALayerClient };
+
+    let lastError;
+    for (const u of urls){
+      try {
+        // Dynamic import as module
+        const mod = await import(/* @vite-ignore */ u);
+        if(mod && (mod.NCALayerClient || mod.default)){
+          return { NCALayerClient: mod.NCALayerClient || mod.default };
+        }
+      } catch(e){ lastError = e; }
+    }
+
+    // Final local fallback by adding a classic <script> tag (if you shipped it).
+    // Uncomment if you have a non-module bundle and expose window.NCALayerClient
+    /*
+    await new Promise((resolve, reject) => {
+      const s=document.createElement("script");
+      s.src="{% static 'ncalayer-client.js' %}";
+      s.onload=()=>resolve();
+      s.onerror=()=>reject(new Error("Local NCALayer script failed to load"));
+      document.head.appendChild(s);
+    });
+    if(window.NCALayerClient) return { NCALayerClient: window.NCALayerClient };
+    */
+
+    throw new Error("Failed to load NCALayer client library" + (lastError ? `: ${lastError.message}` : ""));
+  }
+
+  // One global AbortController to allow cancel
+  let controller = null;
+
+  async function connectAndSign(){
+    ensureSecureContext();
+    busy(true);
+    setStatus("Loading NCALayer client…");
+
+    try {
+      const { NCALayerClient } = await loadNCALayerModule();
+
+      setStatus("Connecting to NCALayer…");
+      const client = new NCALayerClient();
+
+      // Connect (will throw if NCALayer app isn’t running/listening)
+      await client.connect();
+      setStatus("Connected. Waiting for signature…");
+
+      const payload = btoa(JSON.stringify({ action: "link_nca", ts: Date.now() }));
+
+      // Ask user to sign in NCALayer (detached CMS)
+      const signature = await client.basicsSignCMS(
+        NCALayerClient.basicsStorageAll,
+        payload,
+        NCALayerClient.basicsCMSParamsDetached,
+        NCALayerClient.basicsSignerSignAny
+      );
+
+      setStatus("Verifying signature on server…");
+
+      // Support cancel for the fetch as well
+      controller = new AbortController();
+      const res = await fetch("{% url 'accounts:cms_verify_and_login' %}", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-CSRFToken": getCookie("csrftoken"),
+        },
+        body: JSON.stringify({ content: payload, signature }),
+        signal: controller.signal,
+        credentials: "include",
+      });
+
+      // Parse response safely
+      const txt = await res.text();
+      let data; try { data = JSON.parse(txt); } catch { data = { error: txt }; }
+
+      if(res.ok && data.bound){
+        setStatus(`Signature linked ✓ IIN: ${data.iin}`, "ok");
+      } else if(res.ok){
+        setStatus(`Signature verified. IIN: ${data.iin}. You can now log in using EDS.`, "warn");
+      } else {
+        throw new Error(data.error || res.statusText || "Verification failed");
+      }
+    } catch (e){
+      if(e.name === "AbortError"){
+        setStatus("Cancelled.", "warn");
+      } else {
+        setStatus("Error: " + e.message, "err");
+      }
+    } finally {
+      busy(false);
+      controller = null;
+    }
+  }
+
+  document.addEventListener("DOMContentLoaded", () => {
+    const signBtn = document.getElementById("btn-sign");
+    const cancelBtn = document.getElementById("btn-cancel");
+
+    signBtn.addEventListener("click", connectAndSign);
+    cancelBtn.addEventListener("click", () => {
+      if(controller) controller.abort();
+    });
+  });
+  </script>
 {% endblock %}
