@@ -1,79 +1,188 @@
 {% extends "base.html" %}
 {% load static %}
+
+{% block title %}Register authenticator{% endblock %}
+
 {% block content %}
-<h2>Register a biometric authenticator</h2>
-<p>Click the button and follow your device prompts (TouchID, Windows Hello, Security Key).</p>
+  <h2>Register a biometric authenticator</h2>
+  <p class="muted">Click the button and follow your device prompts (Touch&nbsp;ID, Windows Hello, or a Security Key).</p>
 
-<label for="cred-name">This device name (optional)</label>
-<input id="cred-name" placeholder="e.g. My phone" />
-<button id="register-btn">Register authenticator</button>
-<p id="status">Preparing…</p>
+  <label for="cred-name">This device name (optional)</label>
+  <input id="cred-name" placeholder="e.g. My phone" />
 
-<!-- Load helpers; keep inline fallback -->
-<script src="{% static 'webauthn.js' %}?v=2"></script>
-<script>
-(function(){
-  if(typeof window.base64UrlToBuffer!=="function"){
-    window.base64UrlToBuffer=function(b64url){const pad="=".repeat((4-(b64url.length%4))%4);const b64=(b64url.replace(/-/g,"+").replace(/_/g,"/")+pad);const str=atob(b64);const bytes=new Uint8Array(str.length);for(let i=0;i<str.length;i++)bytes[i]=str.charCodeAt(i);return bytes.buffer;}
-  }
-  if(typeof window.bufferToBase64Url!=="function"){
-    window.bufferToBase64Url=function(buf){const bytes=new Uint8Array(buf);let str="";for(let i=0;i<bytes.byteLength;i++)str+=String.fromCharCode(bytes[i]);return btoa(str).replace(/\+/g,"-").replace(/\//g,"_").replace(/=+$/,"");}
-  }
-  if(typeof window.getCookie!=="function"){
-    window.getCookie=function(name){const m=document.cookie.match(new RegExp("(^|; )"+name+"=([^;]*)"));return m?decodeURIComponent(m[2]):null;}
-  }
-  if(typeof window.ensureWebAuthn!=="function"){
-    window.ensureWebAuthn=function(){if(!("credentials" in navigator)||typeof navigator.credentials.create!=="function"){throw new Error("WebAuthn not available (use HTTPS or http://localhost)");}}
-  }
-})();
-</script>
+  <div class="row">
+    <button id="register-btn" class="btn">Register authenticator</button>
+    <button id="cancel-btn" class="btn secondary" type="button" hidden>Cancel</button>
+  </div>
 
-<script>
-document.getElementById("register-btn").addEventListener("click", async () => {
-  const name = document.getElementById("cred-name").value || "Authenticator";
-  const statusEl = document.getElementById("status");
-  try {
-    ensureWebAuthn();
+  <!-- Live status area for screen readers + visual feedback -->
+  <p id="status" class="status muted" role="status" aria-live="polite">Preparing…</p>
 
-    const res = await fetch("{% url 'accounts:webauthn_register_begin' %}", { credentials: "include" });
-    if (!res.ok) throw new Error("Failed to start: " + res.status);
-    const options = await res.json();
-
-    // webauthn 2.7: challenge and user.id are top-level
-    options.challenge = base64UrlToBuffer(options.challenge);
-    options.user.id   = base64UrlToBuffer(options.user.id);
-
-    const cred = await navigator.credentials.create({ publicKey: options });
-
-    const attestation = {
-      id: cred.id,
-      rawId: bufferToBase64Url(cred.rawId),
-      type: cred.type,
-      response: {
-        clientDataJSON: bufferToBase64Url(cred.response.clientDataJSON),
-        attestationObject: bufferToBase64Url(cred.response.attestationObject),
-      },
-      name: name
-    };
-
-    const complete = await fetch("{% url 'accounts:webauthn_register_complete' %}", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "X-CSRFToken": getCookie("csrftoken") },
-      credentials: "include",
-      body: JSON.stringify(attestation),
-    });
-    const txt = await complete.text();
-    let result; try { result = JSON.parse(txt); } catch { result = { ok: false, error: txt }; }
-
-    if (complete.ok && result.ok) {
-      statusEl.textContent = "Registration successful.";
-      window.location = "{% url 'accounts:profile' %}";
-    } else {
-      statusEl.textContent = "Registration failed: " + (result.error || complete.statusText);
+  <!-- Load helpers; keep inline fallback -->
+  <script src="{% static 'webauthn.js' %}?v=2"></script>
+  <script>
+  (function(){
+    // Minimal polyfills / helpers if static file isn't loaded:
+    if(typeof window.base64UrlToBuffer!=="function"){
+      window.base64UrlToBuffer=function(b64url){
+        const pad="=".repeat((4-(b64url.length%4))%4);
+        const b64=(b64url.replace(/-/g,"+").replace(/_/g,"/")+pad);
+        const str=atob(b64);
+        const bytes=new Uint8Array(str.length);
+        for(let i=0;i<str.length;i++)bytes[i]=str.charCodeAt(i);
+        return bytes.buffer;
+      }
     }
-  } catch (err) {
-    statusEl.textContent = "Error: " + err.message;
-  }
-});
-</script>
+    if(typeof window.bufferToBase64Url!=="function"){
+      window.bufferToBase64Url=function(buf){
+        const bytes=new Uint8Array(buf); let str="";
+        for(let i=0;i<bytes.byteLength;i++) str+=String.fromCharCode(bytes[i]);
+        return btoa(str).replace(/\+/g,"-").replace(/\//g,"_").replace(/=+$/,"");
+      }
+    }
+    if(typeof window.getCookie!=="function"){
+      window.getCookie=function(name){
+        const m=document.cookie.match(new RegExp("(^|; )"+name+"=([^;]*)"));
+        return m?decodeURIComponent(m[2]):null;
+      }
+    }
+    if(typeof window.ensureWebAuthn!=="function"){
+      window.ensureWebAuthn=function(){
+        const isSecure = location.protocol==="https:" || location.hostname==="localhost";
+        if(!isSecure) throw new Error("WebAuthn requires HTTPS (or http://localhost).");
+        if(!("credentials" in navigator) || typeof navigator.credentials.create!=="function"){
+          throw new Error("WebAuthn API not available in this browser.");
+        }
+      }
+    }
+  })();
+  </script>
+
+  <script>
+  (function(){
+    const btn = document.getElementById("register-btn");
+    const cancelBtn = document.getElementById("cancel-btn");
+    const nameEl = document.getElementById("cred-name");
+    const statusEl = document.getElementById("status");
+
+    let controller = null;
+
+    function setStatus(text, cls="muted"){
+      statusEl.className = "status " + cls;
+      statusEl.textContent = text;
+    }
+
+    function busy(isBusy){
+      btn.disabled = isBusy;
+      btn.textContent = isBusy ? "Registering…" : "Register authenticator";
+      cancelBtn.hidden = !isBusy;
+    }
+
+    cancelBtn.addEventListener("click", () => {
+      if(controller) controller.abort();
+      setStatus("Cancelled.", "warn");
+      busy(false);
+    });
+
+    btn.addEventListener("click", async () => {
+      const name = nameEl.value.trim() || "Authenticator";
+      try {
+        ensureWebAuthn();
+      } catch (e) {
+        setStatus("Error: " + e.message, "err");
+        return;
+      }
+
+      busy(true);
+      setStatus("Contacting server…");
+
+      controller = new AbortController();
+      const signal = controller.signal;
+
+      try {
+        // 1) Begin registration with server
+        const beginRes = await fetch("{% url 'accounts:webauthn_register_begin' %}", {
+          credentials: "include",
+          signal,
+        });
+        if(!beginRes.ok) throw new Error("Failed to start ("+beginRes.status+")");
+        const options = await beginRes.json();
+
+        // 2) Normalize PublicKeyCredentialCreationOptions
+        // Server should provide base64url for binary fields. Convert to ArrayBuffers.
+        const publicKey = options; // already top-level in your code
+
+        // Required binary fields:
+        publicKey.challenge = base64UrlToBuffer(publicKey.challenge);
+        if(publicKey.user && publicKey.user.id){
+          publicKey.user.id = base64UrlToBuffer(publicKey.user.id);
+        }
+
+        // Optional: excludeCredentials[].id mapping
+        if(Array.isArray(publicKey.excludeCredentials)){
+          publicKey.excludeCredentials = publicKey.excludeCredentials.map(c => ({
+            ...c, id: base64UrlToBuffer(c.id)
+          }));
+        }
+
+        // Optional: add a timeout if server didn't set one
+        if(typeof publicKey.timeout!=="number"){ publicKey.timeout = 120000; }
+
+        setStatus("Waiting for authenticator…");
+
+        // 3) Create credential
+        const cred = await navigator.credentials.create({ publicKey });
+
+        // 4) Prepare attestation payload
+        const attestation = {
+          id: cred.id,
+          rawId: bufferToBase64Url(cred.rawId),
+          type: cred.type,
+          response: {
+            clientDataJSON: bufferToBase64Url(cred.response.clientDataJSON),
+            attestationObject: bufferToBase64Url(cred.response.attestationObject),
+          },
+          name: name
+        };
+
+        setStatus("Finalizing with server…");
+
+        // 5) Complete registration with server
+        const complete = await fetch("{% url 'accounts:webauthn_register_complete' %}", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "X-CSRFToken": getCookie("csrftoken"),
+          },
+          credentials: "include",
+          body: JSON.stringify(attestation),
+          signal,
+        });
+
+        const txt = await complete.text();
+        let result; try { result = JSON.parse(txt); } catch { result = { ok:false, error: txt }; }
+
+        if(complete.ok && result.ok){
+          setStatus("Registration successful ✓ Redirecting…", "ok");
+          window.location = "{% url 'accounts:profile' %}";
+        } else {
+          throw new Error(result.error || complete.statusText || "Registration failed.");
+        }
+
+      } catch (err) {
+        if(err.name === "AbortError"){
+          setStatus("Cancelled.", "warn");
+        } else if(err.name === "NotAllowedError"){
+          // User dismissed the platform prompt
+          setStatus("Operation was cancelled or timed out in the authenticator.", "warn");
+        } else {
+          setStatus("Error: " + err.message, "err");
+        }
+      } finally {
+        busy(false);
+        controller = null;
+      }
+    });
+  })();
+  </script>
 {% endblock %}
