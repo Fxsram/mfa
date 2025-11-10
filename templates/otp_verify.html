@@ -1,9 +1,10 @@
 {% extends "base.html" %}
+{% block title %}Verify OTP{% endblock %}
 {% block content %}
-<h2>Verify OTP</h2>
-<p class="muted">Open your authenticator app, then enter the code.</p>
-<form method="post">{% csrf_token %}
-  {{ form.as_p }}
-  <button type="submit">Verify</button>
-</form>
+  <h2>Verify OTP</h2>
+  <p class="muted">Open your authenticator app and enter the current code.</p>
+  <form method="post" class="stack">{% csrf_token %}
+    {{ form.as_p }}
+    <button class="btn" type="submit">Verify</button>
+  </form>
 {% endblock %}

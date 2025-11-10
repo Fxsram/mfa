@@ -1,54 +1,51 @@
 {% extends "base.html" %}
-{% load static %}
+{% block title %}Login with EDS{% endblock %}
 {% block content %}
-<h2>Login with Digital Signature (NCALayer)</h2>
-<p>Click the button below and confirm the signing request in your NCALayer application.</p>
+  <h2>Login with Digital Signature (NCALayer)</h2>
+  <p>Click the button and confirm the request in NCALayer.</p>
 
-<script type="module">
-import { NCALayerClient } from "https://cdn.jsdelivr.net/npm/ncalayer-js-client@1.5.5/lib/index.js";
+  <script type="module">
+    import { NCALayerClient } from "https://cdn.jsdelivr.net/npm/ncalayer-js-client@1.5.5/lib/index.js";
+    async function loginWithECP() {
+      const status = document.getElementById("status");
+      const client = new NCALayerClient();
+      try {
+        await client.connect();
+        status.textContent = "Connected to NCALayer…";
 
-async function loginWithECP() {
-  const status = document.getElementById("status");
-  const client = new NCALayerClient();
-  try {
-    await client.connect();
-    status.textContent = "Connected to NCALayer...";
+        const documentInBase64 = btoa(JSON.stringify({ action: "login_nca", ts: Date.now() }));
+        const signature = await client.basicsSignCMS(
+          NCALayerClient.basicsStorageAll,
+          documentInBase64,
+          NCALayerClient.basicsCMSParamsDetached,
+          NCALayerClient.basicsSignerSignAny
+        );
 
-    const documentInBase64 = btoa(JSON.stringify({
-      action: "login_nca",
-      ts: Date.now()
-    }));
+        const res = await fetch("{% url 'accounts:cms_verify_and_login' %}", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "X-CSRFToken": getCookie("csrftoken") },
+          body: JSON.stringify({ content: documentInBase64, signature }),
+        });
 
-    const signature = await client.basicsSignCMS(
-      NCALayerClient.basicsStorageAll,
-      documentInBase64,
-      NCALayerClient.basicsCMSParamsDetached,
-      NCALayerClient.basicsSignerSignAny
-    );
-
-    const res = await fetch("{% url 'accounts:cms_verify_and_login' %}", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "X-CSRFToken": getCookie("csrftoken") },
-      body: JSON.stringify({ content: documentInBase64, signature }),
-    });
-
-    const data = await res.json();
-    if (res.ok && data.logged_in) {
-      status.textContent = `✅ Successfully logged in. IIN: ${data.iin}`;
-      setTimeout(() => (window.location = "{% url 'accounts:profile' %}"), 1500);
-    } else {
-      status.textContent = "Error: " + (data.error || res.statusText);
+        const data = await res.json();
+        if (res.ok && data.logged_in) {
+          status.className = "status ok";
+          status.textContent = `Logged in ✓ (IIN: ${data.iin})`;
+          setTimeout(() => (window.location = "{% url 'accounts:profile' %}"), 800);
+        } else {
+          status.className = "status err";
+          status.textContent = "Error: " + (data.error || res.statusText);
+        }
+      } catch (e) {
+        status.className = "status err";
+        status.textContent = "Error: " + e.message;
+      }
     }
-  } catch (e) {
-    status.textContent = "Error: " + e.message;
-  }
-}
+    document.addEventListener("DOMContentLoaded", () => {
+      document.getElementById("btn-ecp").addEventListener("click", loginWithECP);
+    });
+  </script>
 
-document.addEventListener("DOMContentLoaded", () => {
-  document.getElementById("btn-ecp").addEventListener("click", loginWithECP);
-});
-</script>
-
-<button id="btn-ecp">Login with Digital Signature</button>
-<p id="status" style="margin-top:10px;"></p>
+  <button class="btn" id="btn-ecp" type="button">Login with Digital Signature</button>
+  <p id="status" class="status muted"></p>
 {% endblock %}

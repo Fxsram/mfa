@@ -1,7 +1,10 @@
 {% extends "base.html" %}
+{% block title %}Profile{% endblock %}
 {% block content %}
-<h2>Welcome, {{ request.user.username }}</h2>
-<p>MFA status: <strong>{{ mfa.get_otp_type_display }}</strong></p>
-<p>Issuer: {{ mfa.issuer }} | Secret length: {{ mfa.secret|length }}</p>
-<p><a href="/otp/setup/">Change MFA settings</a></p>
+  <h2>Welcome, {{ request.user.username }}</h2>
+  <div class="stack">
+    <p>MFA status: <strong>{{ mfa.get_otp_type_display }}</strong></p>
+    <p class="muted">Issuer: {{ mfa.issuer }} · Secret length: {{ mfa.secret|length }}</p>
+    <a class="btn" href="/otp/setup/">Change MFA settings</a>
+  </div>
 {% endblock %}

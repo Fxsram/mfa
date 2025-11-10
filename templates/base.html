@@ -1,41 +1,169 @@
 <!doctype html>
-<html>
+<html lang="en">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>MFA</title>
+  <title>{% block title %}MFA{% endblock %}</title>
   <style>
-    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; margin: 2rem; }
-    .card { max-width: 560px; padding: 1rem 1.5rem; border: 1px solid #ddd; border-radius: 12px; }
-    input, select { width: 100%; padding: .6rem; margin: .25rem 0 1rem; }
-    button { padding: .6rem 1rem; cursor: pointer; }
-    nav a { margin-right: 1rem; }
-    .muted { color: #666; }
-    .qr { margin-top: 1rem; }
+    :root{
+      --bg: #ffffff;
+      --fg: #0f172a;
+      --muted:#6b7280;
+      --border:#e5e7eb;
+      --card:#ffffff;
+      --focus:#2563eb;
+      --btn:#111827;
+      --btn-fg:#ffffff;
+      --btn-hover:#000000;
+      --danger:#b91c1c;
+      --success:#0f766e;
+      --warning:#b45309;
+      --radius: 14px;
+      --shadow: 0 6px 20px rgba(2,6,23,.08);
+    }
+    @media (prefers-color-scheme: dark){
+      :root{
+        --bg:#0b1020;
+        --fg:#e5e7eb;
+        --muted:#94a3b8;
+        --border:#1f2937;
+        --card:#0f172a;
+        --btn:#e5e7eb;
+        --btn-fg:#0b1020;
+        --btn-hover:#ffffff;
+      }
+    }
+    *{box-sizing:border-box}
+    html,body{height:100%}
+    body{
+      margin:0;
+      font: 15px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+      background: linear-gradient(180deg, var(--bg), color-mix(in oklab, var(--bg) 90%, #4f46e5 10%)) fixed;
+      color:var(--fg);
+    }
+    .wrap{
+      max-width: 860px;
+      margin: clamp(12px, 5vw, 48px) auto;
+      padding: 0 16px;
+    }
+    nav{
+      display:flex; align-items:center; gap:.75rem; flex-wrap:wrap;
+      padding: 12px 0 18px;
+    }
+    nav a{
+      text-decoration:none; color:var(--fg); opacity:.9;
+      padding:.5rem .8rem; border:1px solid var(--border); border-radius:10px;
+    }
+    nav a:hover{opacity:1; background:color-mix(in oklab, var(--card) 92%, var(--fg) 8%);}
+
+    .card{
+      background:var(--card);
+      border:1px solid var(--border);
+      border-radius:var(--radius);
+      box-shadow:var(--shadow);
+      padding:clamp(16px, 3vw, 28px);
+    }
+    .stack{display:grid; gap:1rem}
+    h1,h2,h3{margin:.2rem 0 .6rem}
+    h2{font-size:clamp(1.2rem, 2.2vw, 1.6rem)}
+    p.muted, .muted{color:var(--muted)}
+    code, kbd{
+      background: color-mix(in oklab, var(--card) 90%, var(--fg) 10%);
+      border:1px solid var(--border);
+      padding:.15rem .35rem; border-radius:8px; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    }
+
+    /* Forms */
+    form{display:grid; gap: .9rem}
+    label{font-weight:600}
+    input, select{
+      width:100%;
+      padding:.7rem .9rem;
+      border:1px solid var(--border);
+      background: var(--bg);
+      color:var(--fg);
+      border-radius:12px;
+      outline:none;
+      transition: box-shadow .15s ease, border-color .15s ease;
+    }
+    input:focus, select:focus{
+      border-color: color-mix(in oklab, var(--focus) 60%, var(--border));
+      box-shadow: 0 0 0 4px color-mix(in oklab, var(--focus) 20%, transparent);
+    }
+
+    .btn{
+      all:unset; display:inline-flex; align-items:center; justify-content:center;
+      padding:.7rem 1rem; border-radius:12px; cursor:pointer; user-select:none;
+      background:var(--btn); color:var(--btn-fg); font-weight:600; border:1px solid transparent;
+      transition: transform .03s ease, filter .15s ease, background .15s ease;
+    }
+    .btn:hover{filter:brightness(1.05); background:var(--btn-hover)}
+    .btn:active{transform: translateY(1px)}
+    .btn.secondary{
+      background:transparent; color:var(--fg); border-color:var(--border);
+    }
+    .btn.full{width:100%}
+
+    .row{display:flex; gap:1rem; flex-wrap:wrap}
+    .row > *{flex:1 1 260px}
+
+    .status{margin-top:.4rem; font-weight:600}
+    .status.ok{color:var(--success)}
+    .status.err{color:var(--danger)}
+    .status.warn{color:var(--warning)}
+
+    .qr{
+      display:block; width:220px; height:220px; border-radius:12px;
+      border:1px solid var(--border);
+      background: #fff; object-fit:contain;
+      box-shadow: var(--shadow);
+    }
+
+    details{
+      border:1px dashed var(--border); border-radius:12px; padding:.6rem .8rem;
+      background: color-mix(in oklab, var(--card) 94%, var(--fg) 6%);
+    }
+    details summary{cursor:pointer; font-weight:600; margin:.2rem 0 .4rem}
+
+    /* Messages */
+    ul.messages{list-style:none; padding:0; margin:0 0 1rem 0; display:grid; gap:.5rem}
+    ul.messages li{
+      padding:.6rem .8rem; border-radius:10px; border:1px solid var(--border);
+      background: color-mix(in oklab, var(--card) 92%, var(--fg) 8%);
+    }
+
+    footer{margin-top:24px; color:var(--muted); font-size:.9rem}
   </style>
+  {% block head %}{% endblock %}
 </head>
 <body>
-  <nav>
-    {% if request.user.is_authenticated %}
-      <a href="/profile/">Profile</a>
-      <a href="/otp/setup/">MFA Setup</a>
-      <a href="/logout/">Logout</a>
-    {% else %}
-      <a href="/login/">Login</a>
-      <a href="/register/">Register</a>
+  <div class="wrap">
+    <nav>
+      {% if request.user.is_authenticated %}
+        <a href="/profile/">Profile</a>
+        <a href="/otp/setup/">MFA Setup</a>
+        <a href="/logout/">Logout</a>
+      {% else %}
+        <a href="/login/">Login</a>
+        <a href="/register/">Register</a>
+      {% endif %}
+    </nav>
+
+    {% if messages %}
+      <ul class="messages">
+        {% for message in messages %}
+          <li>{{ message }}</li>
+        {% endfor %}
+      </ul>
     {% endif %}
-  </nav>
 
-  {% if messages %}
-    <ul>
-      {% for message in messages %}
-        <li>{{ message }}</li>
-      {% endfor %}
-    </ul>
-  {% endif %}
+    <main class="card">
+      {% block content %}{% endblock %}
+    </main>
 
-  <div class="card">
-    {% block content %}{% endblock %}
+    <footer>
+      {% block footer %}{% endblock %}
+    </footer>
   </div>
 </body>
 </html>

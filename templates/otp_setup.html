@@ -1,88 +1,109 @@
 {% extends "base.html" %}
+{% block title %}MFA Setup{% endblock %}
 {% block content %}
-<h2>MFA Setup</h2>
-<form method="post">{% csrf_token %}
-  <label>OTP type</label>
-  {{ form.otp_type }}
-  <button type="submit">Save</button>
-</form>
+  <div class="stack">
+    <header>
+      <h2>Multi-Factor Authentication</h2>
+      <p class="muted">Choose an MFA method. You can switch anytime.</p>
+    </header>
 
-{% if mfa.otp_type == "TOTP" or mfa.otp_type == "HOTP" %}
-  <hr/>
-  <h3>Enroll your app</h3>
-  <p>Scan this QR in Google Authenticator / Authy / Microsoft Authenticator:</p>
-  {% if qr_data_uri %}
-    <img class="qr" src="{{ qr_data_uri }}" alt="QR code" width="220" height="220"/>
-  {% endif %}
-  <p class="muted">Or use this key manually:<br/><code>{{ mfa.secret }}</code></p>
-  {% if provisioning_uri %}
-    <details><summary>Provisioning URI (debug)</summary>
-      <code style="word-break: break-all;">{{ provisioning_uri }}</code>
-    </details>
-  {% endif %}
-  {% if live_totp %}
-    <p>Current TOTP (for testing): <strong>{{ live_totp }}</strong></p>
-  {% endif %}
-{% elif mfa.otp_type == "WEBAUTHN" %}
-  <hr/>
-  <h3>Enroll your biometric authenticator</h3>
-  <p><a href="{% url 'accounts:webauthn_setup' %}">Go to WebAuthn setup page</a>.</p>
+    <form method="post" class="stack">{% csrf_token %}
+      <label for="{{ form.otp_type.id_for_label }}">OTP type</label>
+      {{ form.otp_type }}
+      <button class="btn" type="submit">Save</button>
+    </form>
 
-{% elif mfa.otp_type == "NCA" %}
-  <hr/>
-  <h3>Enroll your Digital Signature (NCALayer)</h3>
-  <p>Click the button below to open NCALayer and sign a request to link your digital certificate (EDS).</p>
+    {% if mfa.otp_type == "TOTP" or mfa.otp_type == "HOTP" %}
+      <hr/>
+      <section class="stack">
+        <h3>Enroll your authenticator app</h3>
+        <p>Scan this QR with Google Authenticator, Microsoft Authenticator, or Authy.</p>
 
-  <script type="module">
-  import { NCALayerClient } from "https://cdn.jsdelivr.net/npm/ncalayer-js-client@1.5.5/lib/index.js";
+        {% if qr_data_uri %}
+          <img class="qr" src="{{ qr_data_uri }}" alt="QR code for MFA enrollment" width="220" height="220"/>
+        {% endif %}
 
-  async function connectAndSign() {
-    const status = document.getElementById('status');
-    status.textContent = "Connecting to NCALayer...";
-    const client = new NCALayerClient();
+        <p class="muted">Or enter this key manually: <br/><code>{{ mfa.secret }}</code></p>
 
-    try {
-      await client.connect();
-      status.textContent = "Connected. Please confirm the signature in NCALayer...";
+        {% if provisioning_uri %}
+          <details>
+            <summary>Provisioning URI (debug)</summary>
+            <code style="word-break:break-all;">{{ provisioning_uri }}</code>
+          </details>
+        {% endif %}
 
-      const payload = btoa(JSON.stringify({
-        action: "link_nca",
-        ts: Date.now()
-      }));
+        {% if live_totp %}
+          <p class="status ok">Current TOTP (testing): <strong>{{ live_totp }}</strong></p>
+        {% endif %}
+      </section>
 
-      const signature = await client.basicsSignCMS(
-        NCALayerClient.basicsStorageAll,
-        payload,
-        NCALayerClient.basicsCMSParamsDetached,
-        NCALayerClient.basicsSignerSignAny
-      );
+    {% elif mfa.otp_type == "WEBAUTHN" %}
+      <hr/>
+      <section class="stack">
+        <h3>Enroll your biometric authenticator</h3>
+        <p>Use Touch ID, Windows Hello, or a security key.</p>
+        <a class="btn" href="{% url 'accounts:webauthn_setup' %}">Open WebAuthn setup</a>
+      </section>
 
-      const res = await fetch("{% url 'accounts:cms_verify_and_login' %}", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "X-CSRFToken": getCookie("csrftoken") },
-        body: JSON.stringify({ content: payload, signature }),
-      });
+    {% elif mfa.otp_type == "NCA" %}
+      <hr/>
+      <section class="stack">
+        <h3>Enroll your Digital Signature (NCALayer)</h3>
+        <p>Click to open NCALayer and sign a request to link your EDS certificate.</p>
 
-      const data = await res.json();
-      if (res.ok && data.bound) {
-        status.textContent = `✅ Digital signature successfully linked (IIN: ${data.iin}).`;
-      } else if (res.ok) {
-        status.textContent = `Signature verified. IIN: ${data.iin}. You can now log in using EDS.`;
-      } else {
-        status.textContent = "Error: " + (data.error || res.statusText);
-      }
-    } catch (e) {
-      status.textContent = "Error: " + e.message;
-    }
-  }
+        <script type="module">
+          import { NCALayerClient } from "https://cdn.jsdelivr.net/npm/ncalayer-js-client@1.5.5/lib/index.js";
 
-  document.addEventListener("DOMContentLoaded", () => {
-    const btn = document.getElementById("btn-nca");
-    if (btn) btn.addEventListener("click", connectAndSign);
-  });
-  </script>
+          async function connectAndSign() {
+            const status = document.getElementById('status');
+            status.textContent = "Connecting to NCALayer...";
+            const client = new NCALayerClient();
 
-  <button id="btn-nca">Link Digital Signature (EDS)</button>
-  <p id="status" style="margin-top:10px;"></p>
-{% endif %}
+            try {
+              await client.connect();
+              status.textContent = "Connected. Please confirm the signature in NCALayer...";
+
+              const payload = btoa(JSON.stringify({ action: "link_nca", ts: Date.now() }));
+
+              const signature = await client.basicsSignCMS(
+                NCALayerClient.basicsStorageAll,
+                payload,
+                NCALayerClient.basicsCMSParamsDetached,
+                NCALayerClient.basicsSignerSignAny
+              );
+
+              const res = await fetch("{% url 'accounts:cms_verify_and_login' %}", {
+                method: "POST",
+                headers: { "Content-Type": "application/json", "X-CSRFToken": getCookie("csrftoken") },
+                body: JSON.stringify({ content: payload, signature }),
+              });
+
+              const data = await res.json();
+              if (res.ok && data.bound) {
+                status.className = "status ok";
+                status.textContent = `Digital signature linked ✓ (IIN: ${data.iin}).`;
+              } else if (res.ok) {
+                status.className = "status warn";
+                status.textContent = `Signature verified (IIN: ${data.iin}). You can now log in using EDS.`;
+              } else {
+                status.className = "status err";
+                status.textContent = "Error: " + (data.error || res.statusText);
+              }
+            } catch (e) {
+              status.className = "status err";
+              status.textContent = "Error: " + e.message;
+            }
+          }
+
+          document.addEventListener("DOMContentLoaded", () => {
+            const btn = document.getElementById("btn-nca");
+            if (btn) btn.addEventListener("click", connectAndSign);
+          });
+        </script>
+
+        <button class="btn" id="btn-nca" type="button">Link Digital Signature (EDS)</button>
+        <p id="status" class="status muted"></p>
+      </section>
+    {% endif %}
+  </div>
 {% endblock %}
